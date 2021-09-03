@@ -7,5 +7,5 @@ class Checker:
         for line in self.lst_without_comments:
             for subline in line.split():
                 self.line_no_space.append(subline)
-        print(self.line_no_space)
+        print(self.line_no_space[1:])
         # self.line_split = self.line_no_space.split()
