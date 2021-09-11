@@ -116,20 +116,23 @@ class GameDoneLose(BaseGameEvent):
 class CastDuplicate(BaseGameEvent):
     pass
 
+class FrameEnded(BaseGameEvent):
+    pass
+
 class SearchFrame:
     casts = {}
 
     def __init__(self, field, cursor, heuristics, previous_frame):
         self.field = field
         self.cursor = cursor
-        self.heuristics
+        self.heuristics = heuristics
         self.previous_frame = previous_frame
         self.cast_register()
         self.neighbors = self.get_sorted_neighbors()
-
+        self.index = 0
 
     def cast_register(self):
-        self.cast = self.generate_cast(field)
+        self.cast = self.field.generate_cast()
         if self.cast in self.casts:
             exception = CastDuplicate('The cast has an earlier double.')
             exception.double = self.casts[self.cast]
@@ -137,10 +140,24 @@ class SearchFrame:
         self.casts[self.cast] = self
 
     def get_sorted_neighbors(self):
-        neighbors = cursor.neighbors
+        neighbors = self.field.cursor.neighbors
         return sorted(neighbors, key=partial(self.heuristics, self.field))
 
-    
+    def upload_to_field(self):
+        self.field.load_cast(self.cast)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.index >= len(self.neighbors):
+            raise StopIteration('There are no unseen neighbors left in this frame. Try to return to a higher level.')
+        neighbor = self.neighbors[self.index]
+        self.index += 1
+        return neighbor
+
+    def __len__(self):
+        return len(self.neighbors) - self.index
 
 
 class BattleField:
@@ -212,14 +229,46 @@ class BattleField:
         try:
             frame = SearchFrame(self, self.cursor, self.heuristics, self.current_frame)
         except CastDuplicate as e:
-            frame = e.double
+            frame = self.current_frame
+            frame.upload_to_field()
+        if not len(frame):
+            while frame is not None:
+                if len(frame):
+                    break
+                frame = frame.previous_frame
+            if frame is not None:
+                frame.upload_to_field()
+        if frame is None:
+            raise GameDoneLose('Game is done, you lose.')
         return frame
 
+    def generate_cast(self):
+        return tuple([x.value for x in self.points])
+
+    def load_cast(self, cast):
+        for new_value, point in zip(cast, self.points):
+            point.value = new_value
+        self.cursor = self.search_zero()
+        self.error = self.estimate()
 
     def fight(self):
+
+        print(self)
+        print('_____')
         try:
             self.current_frame = self.get_frame()
-        except
+        except GameDoneWin as e:
+            return self.current_frame
+        except GameDoneLose as e:
+            raise e
+            return None
+        except CastDuplicate as e:
+            pass
+        for neighbor in self.current_frame:
+            self.cursor < neighbor
+            return self.fight()
+
+
 
 
 def base_heuristics(field, current_point):
@@ -231,12 +280,7 @@ def base_heuristics(field, current_point):
 
 
 
-battle = BattleField(3, [0, 2, 3, 4, 5, 6, 7, 8, 1], base_heuristics)
-print(battle)
-print(battle.estimate())
-battle.points[0] < battle.points[-1]
-print(battle)
-print(battle.estimate())
-battle.points[-1] < battle.points[1]
-print(battle)
-print(battle.estimate())
+battle = BattleField(3, [4, 5, 6, 1, 2, 8, 0, 3, 7], base_heuristics)
+frame = battle.fight()
+print(frame)
+print(frame.cast)
