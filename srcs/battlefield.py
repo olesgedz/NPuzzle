@@ -1,3 +1,40 @@
+
+import copy
+
+
+from dataclasses import dataclass, field
+from typing import Any
+import heapq
+
+@dataclass(order=True)
+class PrioritizedItem:
+    priority: int
+    item: Any=field(compare=False)
+
+class PriorityQueue:
+    def __init__(self):
+        self.data = []
+
+    def __len__(self):
+        return len(self.data)
+
+    def push(self, item, priority):
+        if not isinstance(priority, int):
+            raise ValueError('The priority must be set as an integer.')
+        if item is None:
+            raise ValueError('The value must be valid.')
+        to_put = PrioritizedItem(priority=priority, item=item)
+        heapq.heappush(self.data, to_put)
+
+    def get(self):
+        try:
+            item_wrapper = heapq.heappop(self.data)
+            return item_wrapper.item
+        except IndexError as e:
+            return None
+
+
+
 class Coordinate:
     def __init__(self, x, y, is_difference=False):
         self.x = x
@@ -67,14 +104,13 @@ class Point:
 
     def estimate(self, value):
         expected_index = self.field.get_expected_index_by_value(value)
+
         expected_coordinate = Coordinate.by_index(expected_index, self.field.size)
-        return (expected_coordinate - self.coordinate).estimate()
+        result = (expected_coordinate - self.coordinate).estimate()
+        return result
 
     def reestimate(self, value):
-        new_error = self.estimate(value)
-        difference = new_error - self.error
-        self.field.error += difference
-        self.error = new_error
+        self.error = self.estimate(value)
 
     def find_neighbors(self):
         maybe_neighbors_coordinates = [self.coordinate.up(), self.coordinate.down(), self.coordinate.right(), self.coordinate.left()]
@@ -104,71 +140,21 @@ class Point:
 from functools import partial
 
 
-class BaseGameEvent(RuntimeError):
-    pass
-
-class GameDoneWin(BaseGameEvent):
-    pass
-
-class GameDoneLose(BaseGameEvent):
-    pass
-
-class CastDuplicate(BaseGameEvent):
-    pass
-
-class FrameEnded(BaseGameEvent):
-    pass
-
-class SearchFrame:
-    casts = {}
-
-    def __init__(self, field, cursor, heuristics, previous_frame):
-        self.field = field
-        self.cursor = cursor
-        self.heuristics = heuristics
-        self.previous_frame = previous_frame
-        self.cast_register()
-        self.neighbors = self.get_sorted_neighbors()
-        self.index = 0
-
-    def cast_register(self):
-        self.cast = self.field.generate_cast()
-        if self.cast in self.casts:
-            exception = CastDuplicate('The cast has an earlier double.')
-            exception.double = self.casts[self.cast]
-            raise exception
-        self.casts[self.cast] = self
-
-    def get_sorted_neighbors(self):
-        neighbors = self.field.cursor.neighbors
-        return sorted(neighbors, key=partial(self.heuristics, self.field))
-
-    def upload_to_field(self):
-        self.field.load_cast(self.cast)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if self.index >= len(self.neighbors):
-            raise StopIteration('There are no unseen neighbors left in this frame. Try to return to a higher level.')
-        neighbor = self.neighbors[self.index]
-        self.index += 1
-        return neighbor
-
-    def __len__(self):
-        return len(self.neighbors) - self.index
-
 
 class BattleField:
-    def __init__(self, size, data, heuristics):
+    casts = set()
+
+    def __init__(self, size, data, heuristics, previous=None):
         self.size = size
         self.points = self.get_points_from_source(data)
         self.link_points()
         self.cursor = self.search_zero()
-        self.error = self.estimate()
         self.heuristics = heuristics
-        self.current_frame = None
+        self.previous = previous
+
+    @property
+    def error(self):
+        return self.estimate()
 
     def __str__(self):
         max_len = max([len(str(x.value)) for x in self.points])
@@ -194,10 +180,10 @@ class BattleField:
             point.find_neighbors()
 
     def estimate(self):
-        result = 0
-        for point in self.points:
-            result += point.error
+        result = self.heuristics(self)
+        print(result)
         return result
+
 
     def get_expected_index_by_value(self, value):
         if value == 0:
@@ -223,64 +209,53 @@ class BattleField:
         index = Coordinate.to_index(coordinate, self.size)
         return self.points[index]
 
-    def get_frame(self):
-        if not self.error:
-            raise GameDoneWin('Game is done, you win.')
-        try:
-            frame = SearchFrame(self, self.cursor, self.heuristics, self.current_frame)
-        except CastDuplicate as e:
-            frame = self.current_frame
-            frame.upload_to_field()
-        if not len(frame):
-            while frame is not None:
-                if len(frame):
-                    break
-                frame = frame.previous_frame
-            if frame is not None:
-                frame.upload_to_field()
-        if frame is None:
-            raise GameDoneLose('Game is done, you lose.')
-        return frame
-
     def generate_cast(self):
         return tuple([x.value for x in self.points])
 
-    def load_cast(self, cast):
-        for new_value, point in zip(cast, self.points):
-            point.value = new_value
-        self.cursor = self.search_zero()
-        self.error = self.estimate()
+    def copy(self):
+        return type(self)(self.size, self.generate_cast(), self.heuristics, previous=self)
 
-    def fight(self):
-
-        print(self)
-        print('_____')
-        try:
-            self.current_frame = self.get_frame()
-        except GameDoneWin as e:
-            return self.current_frame
-        except GameDoneLose as e:
-            raise e
-            return None
-        except CastDuplicate as e:
-            pass
-        for neighbor in self.current_frame:
-            self.cursor < neighbor
-            return self.fight()
+    def get_childs(self):
+        coordinates = [x for x in (self.cursor.coordinate.up(), self.cursor.coordinate.down(), self.cursor.coordinate.left(), self.cursor.coordinate.right()) if x.is_valid(self.size)]
+        childs = []
+        for coordinate in coordinates:
+            field = self.copy()
+            field.cursor < field.get_point_by_coordinate(coordinate)
+            cast = field.generate_cast()
+            if cast not in self.casts:
+                self.casts.add(cast)
+                childs.append(field)
+        return childs
 
 
 
-
-def base_heuristics(field, current_point):
-    cursor = field.cursor
-    current_point > cursor
-    error = field.error
-    current_point < cursor
-    return error
+class Algorithm:
+    def __init__(self, size, data, heuristics):
+        self.queue = PriorityQueue()
+        root_field = BattleField(size, data, heuristics)
+        self.queue.push(root_field, root_field.error)
 
 
+    def go(self):
+        while True:
+            field = self.queue.get()
+            if field is None:
+                return None
+            print(field, len(field.casts), len(self.queue))
+            print('________')
+            if not field.error:
+                return field
+            childs = field.get_childs()
+            for child in childs:
+                self.queue.push(child, child.error)
 
-battle = BattleField(3, [4, 5, 6, 1, 2, 8, 0, 3, 7], base_heuristics)
-frame = battle.fight()
-print(frame)
-print(frame.cast)
+
+
+
+
+def base_heuristics(field):
+    return len([True for index, x in enumerate(field.points) if x.value != 0 and x.error != 0])
+
+
+algo = Algorithm(3, [3, 2, 6, 1, 4, 0, 8, 7, 5], base_heuristics)
+print(algo.go())
