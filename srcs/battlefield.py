@@ -227,22 +227,39 @@ class BattleField:
                 childs.append(field)
         return childs
 
-
+class FieldIsNotValidError(ValueError):
+    pass
 
 class Algorithm:
     def __init__(self, size, data, heuristics):
         self.queue = PriorityQueue()
-        root_field = BattleField(size, data, heuristics)
-        self.queue.push(root_field, root_field.error)
+        self.root_field = BattleField(size, data, heuristics)
+        self.queue.push(self.root_field, self.root_field.error)
 
+    def check(self):
+        points = self.root_field.points
+        counter = 0
+        for index, point in enumerate(points):
+            number = point.value
+            if number == 0:
+                number = len(points)
+            index += 1
+            while index < len(points):
+                another_number = points[index].value
+                if another_number == 0:
+                    another_number = len(points)
+                if another_number < number:
+                    counter += 1
+                index += 1
+        return not bool(counter % 2)
 
     def go(self):
+        if not self.check():
+            raise FieldIsNotValidError('Oh, you scoundrel! Brought me the wrong field! He decided to deceive me!')
         while True:
             field = self.queue.get()
             if field is None:
                 return None
-            print(field, len(field.casts), len(self.queue))
-            print('________')
             if not field.error:
                 return field
             childs = field.get_childs()
@@ -250,12 +267,9 @@ class Algorithm:
                 self.queue.push(child, child.error)
 
 
-
-
-
 def base_heuristics(field):
     return len([True for index, x in enumerate(field.points) if x.value != 0 and x.error != 0])
 
 
-algo = Algorithm(3, [3, 2, 6, 1, 4, 0, 8, 7, 5], base_heuristics)
+algo = Algorithm(3, [1, 2, 3, 4, 5, 6, 7, 8, 0], base_heuristics)
 print(algo.go())
